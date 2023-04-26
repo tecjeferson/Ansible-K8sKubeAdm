@@ -1,0 +1,128 @@
+---
+- name: Install and config ContainerD
+  hosts: all
+  become: yes #became root
+  tasks:
+  - name: Install Linux kernel modules
+    ansible.builtin.copy:
+      src: ./k8s.conf
+      dest: /etc/modules-load.d/k8s.conf
+      mode: '644'
+
+  - name: Adding overlay
+    modprobe:
+      name: overlay
+      state: present
+
+  - name: Adding br_netfilter
+    modprobe:
+      name: br_netfilter
+      state: present
+
+  - name: sysctl params config
+    ansible.builtin.copy:
+      src: ./k8s-cri.conf
+      dest: /etc/sysctl.d/k8s.conf
+      mode: '644'
+
+  - name: Executing sysctl to implement the configurations
+    command: "sysctl --system"
+
+  - name: Adding APT repository key
+    apt_key:
+      url: https://download.docker.com/linux/ubuntu/gpg
+      state: present
+
+  - name: Adding repository to install containerD
+    apt_repository:
+      repo: deb https://download.docker.com/linux/ubuntu bionic stable
+      state: present
+
+  - name: Install containerD
+    apt:
+      name: containerd.io=1.6.12-1
+      update_cache: yes
+
+  - name: ContainerD config directory creation
+    file:
+      path: /etc/containerd
+      state: directory
+      owner: root
+      group: root
+      mode: 0644
+
+  - name: Create config file
+    shell: containerd config default > /etc/containerd/config.toml
+
+  - name: Change containerd config
+    command: sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
+
+  - name: Restart containerD
+    ansible.builtin.service:
+      name: containerd
+      state: restarted
+#####################Install Kubeadm Kubelet and Kubectl########################################
+- name: Install kubeadm, kubelet and kubectl
+  hosts: all
+  become: yes
+  tasks:
+  - name: Install required packages
+    apt:
+      pkg:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      state: present
+  
+  - name: Adding repository key
+    apt_key:
+      url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+      state: present
+    
+  - name: Adding repository
+    apt_repository:
+      repo: deb https://apt.kubernetes.io/ kubernetes-xenial main
+      state: present
+    
+  - name: Kubelet, kubeadm, kubectl packages install
+    apt:
+      pkg:
+      - kubectl=1.26.0-00
+      - kubeadm=1.26.0-00
+      - kubelet=1.26.0-00
+      state: present
+
+  - name: Set to do not update
+    command: apt-mark hold kubelet kubeadm kubectl
+####################Control Plane###############################
+- name: Start K8s cluster
+  hosts: control_plane
+  become: yes
+  tasks:
+  - name: Init command
+    command: kubeadm init --apiserver-cert-extra-sans 172.24.94.51
+
+  - name: .kube directory creation
+    file:
+      path: $HOME/.kube
+      state: directory
+      owner: root
+      group: root
+      mode: 0644
+
+  - name: file kube config copy
+    copy:
+      dest: $HOME/.kube/config
+      src: /etc/kubernetes/admin.conf
+      remote_src: yes
+      owner: root
+      group: root
+      mode: 0640
+  
+  - name: Install CNI
+    command: kubectl apply -f https://github.com/weaveworks/weave/releases/download/v2.8.1/weave-daemonset-k8s.yaml
+
+
+
+
+    
